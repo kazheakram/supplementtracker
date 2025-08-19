@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Baby Pink Supplement Reminder</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom Tailwind configuration for baby pink color */
+        :root {
+            --baby-pink: #FEE7F2; /* A soft, light pink */
+            --darker-pink: #FDCCDD; /* Slightly darker pink for accents */
+            --text-color: #555; /* Soft dark grey for text */
+            --border-color: #FDDDEE; /* Light pink border */
+            --taken-bg-color: #F4FBF4; /* Very light green for taken state */
+            --taken-border-color: #DDECDD; /* Slightly darker green for taken border */
+        }
+
+        /* Override Tailwind colors with custom properties */
+        .bg-baby-pink { background-color: var(--baby-pink); }
+        .bg-darker-pink { background-color: var(--darker-pink); }
+        .text-text-color { color: var(--text-color); }
+        .border-border-color { border-color: var(--border-color); }
+        .bg-taken { background-color: var(--taken-bg-color); }
+        .border-taken { border-color: var(--taken-border-color); }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #FFF0F5; /* A very light blush pink for the overall body */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        /* Simple modal for alerts, replacing alert() */
+        .custom-alert-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.4);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        .custom-alert-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .custom-alert-box {
+            background-color: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            max-width: 90%;
+            width: 350px;
+            transform: translateY(-20px);
+            transition: transform 0.3s ease;
+        }
+
+        .custom-alert-overlay.show .custom-alert-box {
+            transform: translateY(0);
+        }
+
+        .custom-alert-box h3 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            color: var(--darker-pink);
+        }
+
+        .custom-alert-box p {
+            font-size: 1.1rem;
+            color: var(--text-color);
+            margin-bottom: 25px;
+        }
+
+        .custom-alert-box button {
+            background-color: var(--darker-pink);
+            color: white;
+            padding: 10px 25px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+        }
+
+        .custom-alert-box button:hover {
+            background-color: #E0B7CB;
+            transform: translateY(-1px);
+        }
+
+        /* Styling for a "taken" reminder item */
+        .reminder-item.taken {
+            background-color: var(--taken-bg-color);
+            border-color: var(--taken-border-color);
+            opacity: 0.8;
+        }
+
+        .reminder-item.taken .text-text-color {
+            text-decoration: line-through;
+            color: #888;
+        }
+
+        /* Additional responsiveness for smaller screens */
+        @media (max-width: 640px) {
+            .container {
+                padding: 15px;
+                margin-top: 20px;
+                margin-bottom: 20px;
+            }
+            .reminder-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .reminder-details {
+                margin-bottom: 10px;
+            }
+            .actions-div {
+                width: 100%; /* Make buttons take full width on small screens */
+                justify-content: flex-end; /* Align buttons to the right */
+            }
+            .actions-div button {
+                flex-grow: 1; /* Make buttons expand */
+            }
+        }
+    </style>
+</head>
+<body class="selection:bg-darker-pink selection:text-white">
+    <div class="container bg-baby-pink p-8 sm:p-12 rounded-3xl shadow-xl max-w-lg w-full border border-border-color">
+        <!-- Main heading removed as requested -->
+
+        <!-- Notification Permission Section -->
+        <div class="mb-4 p-4 bg-white rounded-2xl shadow-sm border border-border-color text-center">
+            <p id="notificationStatus" class="text-text-color text-sm mb-2"></p>
+            <button id="requestNotificationPermissionButton"
+                    class="bg-blue-400 text-white px-4 py-2 rounded-xl font-semibold text-sm hover:bg-blue-500 transition transform hover:-translate-y-0.5 shadow-md hidden">
+                Enable Browser Notifications
+            </button>
+        </div>
+
+        <!-- Streak Feature Display -->
+        <div class="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-border-color text-center">
+            <p id="streakDisplay" class="text-text-color text-lg font-semibold"></p>
+        </div>
+
+        <!-- Button to Toggle Add New Reminder Form -->
+        <button id="toggleAddReminderButton"
+                class="w-full bg-darker-pink text-white py-3 mb-6 rounded-xl font-semibold hover:bg-opacity-90 transition transform hover:-translate-y-0.5 shadow-lg">
+            Add New Supplement
+        </button>
+
+        <!-- Add New Reminder Form (initially hidden) -->
+        <div id="addReminderSection" class="mb-8 p-6 bg-white rounded-2xl shadow-md border border-border-color hidden">
+            <h2 class="text-xl font-semibold text-text-color mb-5">Add New Reminder</h2>
+            <form id="reminderForm" class="space-y-4">
+                <div>
+                    <label for="supplementName" class="block text-text-color text-sm font-medium mb-1">Supplement Name:</label>
+                    <input type="text" id="supplementName" required
+                           class="w-full p-3 border border-border-color rounded-xl focus:outline-none focus:ring-2 focus:ring-darker-pink">
+                </div>
+                <div>
+                    <label for="reminderTime" class="block text-text-color text-sm font-medium mb-1">Time:</label>
+                    <input type="time" id="reminderTime" required
+                           class="w-full p-3 border border-border-color rounded-xl focus:outline-none focus:ring-2 focus:ring-darker-pink">
+                </div>
+                <button type="submit"
+                        class="w-full bg-darker-pink text-white py-3 rounded-xl font-semibold hover:bg-opacity-90 transition transform hover:-translate-y-0.5 shadow-lg">
+                    Add Reminder
+                </button>
+            </form>
+        </div>
+
+        <!-- Reminder List -->
+        <div class="p-6 bg-white rounded-2xl shadow-md border border-border-color">
+            <h2 class="text-xl font-semibold text-text-color mb-5">Your Reminders</h2>
+            <div id="reminderList" class="space-y-4">
+                <!-- Reminders will be dynamically added here -->
+                <p id="noRemindersMessage" class="text-center text-text-color opacity-70">No reminders added yet!</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Alert Modal -->
+    <div id="customAlertOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box">
+            <h3 id="customAlertTitle">Reminder!</h3>
+            <p id="customAlertMessage">It's time to take your supplement.</p>
+            <button id="customAlertCloseBtn">OK</button>
+        </div>
+    </div>
+
+    <script>
+        // Store reminders in a simple array
+        let reminders = [];
+
+        // Global streak variables
+        let currentStreak = 0;
+        let lastSupplementTakenDate = null; // YYYY-MM-DD format: Most recent date *any* supplement was marked taken.
+        let lastDayAuditedDate = null; // YYYY-MM-DD format: Last date for which the "all supplements taken" audit was run.
+
+        // Get DOM elements
+        const reminderForm = document.getElementById('reminderForm');
+        const supplementNameInput = document.getElementById('supplementName');
+        const reminderTimeInput = document.getElementById('reminderTime');
+        const reminderListDiv = document.getElementById('reminderList');
+        const noRemindersMessage = document.getElementById('noRemindersMessage');
+
+        // Toggle add reminder section elements
+        const toggleAddReminderButton = document.getElementById('toggleAddReminderButton');
+        const addReminderSection = document.getElementById('addReminderSection');
+
+        // Custom alert modal elements
+        const customAlertOverlay = document.getElementById('customAlertOverlay');
+        const customAlertTitle = document.getElementById('customAlertTitle');
+        const customAlertMessage = document.getElementById('customAlertMessage');
+        const customAlertCloseBtn = document.getElementById('customAlertCloseBtn');
+
+        // Notification elements
+        const notificationStatus = document.getElementById('notificationStatus');
+        const requestNotificationPermissionButton = document.getElementById('requestNotificationPermissionButton');
+
+        /**
+         * Displays a custom alert message instead of using window.alert().
+         * @param {string} title - The title for the alert.
+         * @param {string} message - The message content for the alert.
+         */
+        function showAlert(title, message) {
+            customAlertTitle.textContent = title;
+            customAlertMessage.textContent = message;
+            customAlertOverlay.classList.add('show');
+        }
+
+        // Close custom alert when OK button is clicked
+        customAlertCloseBtn.addEventListener('click', () => {
+            customAlertOverlay.classList.remove('show');
+        });
+
+        /**
+         * Saves the current reminders array to localStorage.
+         */
+        function saveReminders() {
+            localStorage.setItem('supplementReminders', JSON.stringify(reminders));
+        }
+
+        /**
+         * Saves streak data to localStorage.
+         */
+        function saveStreakData() {
+            localStorage.setItem('supplementStreak', JSON.stringify({
+                currentStreak: currentStreak,
+                lastSupplementTakenDate: lastSupplementTakenDate,
+                lastDayAuditedDate: lastDayAuditedDate
+            }));
+        }
+
+        /**
+         * Updates the streak display in the UI.
+         */
+        function updateStreakDisplay() {
+            const streakDisplay = document.getElementById('streakDisplay');
+            if (streakDisplay) {
+                if (currentStreak > 0) {
+                    streakDisplay.textContent = `Current Streak: ${currentStreak} Day${currentStreak > 1 ? 's' : ''}! 🎉`;
+                } else {
+                    streakDisplay.textContent = "Start your supplement streak!";
+                }
+            }
+        }
+
+        /**
+         * Gets today's date in YYYY-MM-DD format.
+         * @returns {string} The current date string.
+         */
+        function getTodayDateString() {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+            const day = String(today.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        /**
+         * Gets yesterday's date in YYYY-MM-DD format.
+         * @returns {string} The yesterday's date string.
+         */
+        function getYesterdayDateString() {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const year = yesterday.getFullYear();
+            const month = String(yesterday.getMonth() + 1).padStart(2, '0');
+            const day = String(yesterday.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        /**
+         * Loads all data (reminders and streak) from localStorage and performs daily streak validation.
+         */
+        function loadAllData() {
+            const todayDate = getTodayDateString();
+
+            // Load reminders
+            const storedReminders = localStorage.getItem('supplementReminders');
+            if (storedReminders) {
+                reminders = JSON.parse(storedReminders);
+            } else {
+                reminders = [];
+            }
+
+            // Load streak data
+            const storedStreak = localStorage.getItem('supplementStreak');
+            if (storedStreak) {
+                const data = JSON.parse(storedStreak);
+                currentStreak = data.currentStreak || 0;
+                lastSupplementTakenDate = data.lastSupplementTakenDate || null;
+                lastDayAuditedDate = data.lastDayAuditedDate || null;
+            } else {
+                currentStreak = 0;
+                lastSupplementTakenDate = null;
+                lastDayAuditedDate = null;
+            }
+
+            // --- STREAK RESET LOGIC (Midnight Audit) ---
+            // This logic runs if the app is opened on a new day since it was last audited.
+            if (lastDayAuditedDate && lastDayAuditedDate !== todayDate) {
+                const dayToAudit = lastDayAuditedDate;
+
+                // Check if all supplements for the 'dayToAudit' were marked as taken
+                // This condition applies only if there were reminders set on that day
+                if (reminders.length > 0) {
+                    const allTakenForAuditDay = reminders.every(r => r.takenDate === dayToAudit);
+
+                    if (!allTakenForAuditDay) {
+                        // If not all were taken for the day that just ended, reset the streak
+                        currentStreak = 0;
+                        lastSupplementTakenDate = null; // Also reset last activity date if streak broken
+                    }
+                }
+            }
+
+            // Check for broken streak due to no activity on previous day, if streak was active
+            const yesterdayDate = getYesterdayDateString();
+            if (currentStreak > 0 && lastSupplementTakenDate && lastSupplementTakenDate !== yesterdayDate && lastSupplementTakenDate !== todayDate) {
+                 // If the last day a supplement was taken was not yesterday (and not today), streak is broken
+                 currentStreak = 0;
+                 lastSupplementTakenDate = null;
+            }
+
+
+            // Always update lastDayAuditedDate to today's date, indicating we've processed up to now
+            lastDayAuditedDate = todayDate;
+            saveStreakData(); // Save updated streak and audit date
+
+            // Reset 'taken' status for current day's reminders
+            reminders.forEach(reminder => {
+                if (reminder.takenDate !== todayDate) {
+                    reminder.takenDate = null; // Clear taken status
+                }
+            });
+
+            saveReminders(); // Save potentially reset statuses
+
+            displayReminders();
+            updateStreakDisplay();
+            updateNotificationUI();
+        }
+
+        /**
+         * Adds a new reminder to the list.
+         * @param {Event} event - The form submission event.
+         */
+        reminderForm.addEventListener('submit', (event) => {
+            event.preventDefault(); // Prevent default form submission
+
+            const name = supplementNameInput.value.trim();
+            const time = reminderTimeInput.value; // Format: HH:MM
+
+            if (name && time) {
+                reminders.push({
+                    id: Date.now(), // Unique ID for each reminder
+                    name: name,
+                    time: time,
+                    takenDate: null // Stores the date (YYYY-MM-DD) when supplement was taken
+                });
+                saveReminders();
+                displayReminders();
+                supplementNameInput.value = ''; // Clear input fields
+                reminderTimeInput.value = '';
+                // Optionally hide the form again after adding
+                // addReminderSection.classList.add('hidden');
+            } else {
+                showAlert('Input Error', 'Please enter both supplement name and time.');
+            }
+        });
+
+        /**
+         * Toggles the visibility of the "Add New Reminder" section.
+         */
+        toggleAddReminderButton.addEventListener('click', () => {
+            addReminderSection.classList.toggle('hidden');
+            const buttonText = addReminderSection.classList.contains('hidden') ? 'Add New Supplement' : 'Hide Add Supplement Form';
+            toggleAddReminderButton.textContent = buttonText;
+        });
+
+        /**
+         * Displays all reminders in the reminder list div.
+         */
+        function displayReminders() {
+            reminderListDiv.innerHTML = ''; // Clear previous list
+
+            if (reminders.length === 0) {
+                noRemindersMessage.classList.remove('hidden');
+                reminderListDiv.appendChild(noRemindersMessage);
+            } else {
+                noRemindersMessage.classList.add('hidden');
+                reminders.sort((a, b) => a.time.localeCompare(b.time)); // Sort by time
+
+                reminders.forEach(reminder => {
+                    const reminderItem = document.createElement('div');
+                    reminderItem.id = `reminder-${reminder.id}`;
+                    reminderItem.classList.add(
+                        'reminder-item',
+                        'flex',
+                        'flex-col',
+                        'sm:flex-row',
+                        'items-start',
+                        'sm:items-center',
+                        'justify-between',
+                        'p-4',
+                        'rounded-xl',
+                        'shadow-sm',
+                        'border',
+                        'w-full'
+                    );
+
+                    // Apply taken state styling
+                    const todayDate = getTodayDateString();
+                    if (reminder.takenDate === todayDate) {
+                        reminderItem.classList.add('taken', 'bg-taken', 'border-taken');
+                    } else {
+                        reminderItem.classList.add('bg-baby-pink', 'border-border-color');
+                    }
+
+                    const reminderDetails = document.createElement('div');
+                    reminderDetails.classList.add('reminder-details', 'flex-grow', 'mb-2', 'sm:mb-0');
+
+                    const nameElement = document.createElement('p');
+                    nameElement.classList.add('text-text-color', 'font-semibold', 'text-lg');
+                    nameElement.textContent = reminder.name;
+
+                    const timeElement = document.createElement('p');
+                    timeElement.classList.add('text-text-color', 'opacity-80', 'text-sm');
+                    timeElement.textContent = `At: ${reminder.time}`;
+
+                    reminderDetails.appendChild(nameElement);
+                    reminderDetails.appendChild(timeElement);
+
+                    const actionsDiv = document.createElement('div');
+                    actionsDiv.classList.add('actions-div', 'flex', 'space-x-2');
+
+                    const markTakenButton = document.createElement('button');
+                    markTakenButton.classList.add(
+                        'text-white',
+                        'px-3',
+                        'py-1.5',
+                        'rounded-lg',
+                        'text-sm',
+                        'font-medium',
+                        'transition',
+                        'transform',
+                        'hover:-translate-y-0.5'
+                    );
+                    // Set button text and color based on taken status
+                    if (reminder.takenDate === todayDate) {
+                        markTakenButton.textContent = 'Taken!';
+                        markTakenButton.classList.add('bg-green-500', 'hover:bg-green-600');
+                        markTakenButton.disabled = true; // Disable if already taken
+                    } else {
+                        markTakenButton.textContent = 'Mark as Taken';
+                        markTakenButton.classList.add('bg-blue-400', 'hover:bg-blue-500');
+                    }
+                    markTakenButton.addEventListener('click', () => {
+                        toggleTakenStatus(reminder.id);
+                    });
+
+                    const deleteButton = document.createElement('button');
+                    deleteButton.classList.add(
+                        'bg-red-400',
+                        'text-white',
+                        'px-3',
+                        'py-1.5',
+                        'rounded-lg',
+                        'text-sm',
+                        'font-medium',
+                        'hover:bg-red-500',
+                        'transition',
+                        'transform',
+                        'hover:-translate-y-0.5'
+                    );
+                    deleteButton.textContent = 'Delete';
+                    deleteButton.addEventListener('click', () => {
+                        deleteReminder(reminder.id);
+                    });
+
+                    actionsDiv.appendChild(markTakenButton);
+                    actionsDiv.appendChild(deleteButton);
+                    reminderItem.appendChild(reminderDetails);
+                    reminderItem.appendChild(actionsDiv);
+                    reminderListDiv.appendChild(reminderItem);
+                });
+            }
+        }
+
+        /**
+         * Toggles the 'taken' status for a reminder and updates the streak.
+         * @param {number} id - The ID of the reminder to update.
+         */
+        function toggleTakenStatus(id) {
+            const reminderIndex = reminders.findIndex(r => r.id === id);
+            if (reminderIndex > -1) {
+                const todayDate = getTodayDateString();
+                // If not already taken today, mark as taken.
+                if (reminders[reminderIndex].takenDate !== todayDate) {
+                    reminders[reminderIndex].takenDate = todayDate;
+                    saveReminders();
+                    displayReminders(); // Re-display to update the UI
+
+                    // Streak increment logic: only if this is the first supplement marked today
+                    if (lastSupplementTakenDate !== todayDate) {
+                        const yesterdayDate = getYesterdayDateString();
+                        if (lastSupplementTakenDate === yesterdayDate) {
+                            currentStreak++;
+                        } else {
+                            currentStreak = 1; // Reset to 1 if not consecutive
+                        }
+                        lastSupplementTakenDate = todayDate;
+                        saveStreakData();
+                        updateStreakDisplay();
+                    }
+                }
+            }
+        }
+
+        /**
+         * Deletes a reminder by its ID and resets streak if all are deleted.
+         * @param {number} id - The ID of the reminder to delete.
+         */
+        function deleteReminder(id) {
+            reminders = reminders.filter(reminder => reminder.id !== id);
+            saveReminders();
+            displayReminders();
+
+            // If all reminders are deleted, reset the streak
+            if (reminders.length === 0) {
+                currentStreak = 0;
+                lastSupplementTakenDate = null;
+                lastDayAuditedDate = null;
+                saveStreakData();
+                updateStreakDisplay();
+            }
+        }
+
+        /**
+         * Sends a browser notification.
+         * @param {string} title - The title of the notification.
+         * @param {string} body - The body text of the notification.
+         */
+        function sendNotification(title, body) {
+            if (Notification.permission === 'granted') {
+                new Notification(title, { body: body, icon: 'https://placehold.co/48x48/FEE7F2/FDCCDD?text=💊' });
+            }
+        }
+
+        /**
+         * Updates the notification status message and button visibility.
+         */
+        function updateNotificationUI() {
+            if (!("Notification" in window)) {
+                notificationStatus.textContent = "Browser notifications are not supported.";
+                requestNotificationPermissionButton.classList.add('hidden');
+                return;
+            }
+
+            switch (Notification.permission) {
+                case 'granted':
+                    notificationStatus.textContent = "Browser notifications are ENABLED.";
+                    requestNotificationPermissionButton.classList.add('hidden');
+                    break;
+                case 'denied':
+                    notificationStatus.textContent = "Browser notifications are BLOCKED. Please enable them in your browser settings.";
+                    requestNotificationPermissionButton.classList.add('hidden');
+                    break;
+                case 'default':
+                    notificationStatus.textContent = "Enable browser notifications for reminders.";
+                    requestNotificationPermissionButton.classList.remove('hidden');
+                    break;
+            }
+        }
+
+        /**
+         * Requests notification permission from the user.
+         */
+        requestNotificationPermissionButton.addEventListener('click', () => {
+            if ("Notification" in window) {
+                Notification.requestPermission().then(permission => {
+                    updateNotificationUI();
+                    if (permission === 'granted') {
+                        showAlert('Notifications Enabled', 'You will now receive browser notifications for your supplements!');
+                    } else if (permission === 'denied') {
+                        showAlert('Notifications Blocked', 'Browser notifications were denied. You can enable them in your browser settings.');
+                    }
+                });
+            }
+        });
+
+        /**
+         * Checks current time against reminder times and triggers alerts.
+         * Runs every minute.
+         */
+        function checkReminders() {
+            const now = new Date();
+            const currentHours = String(now.getHours()).padStart(2, '0');
+            const currentMinutes = String(now.getMinutes()).padStart(2, '0');
+            const currentTime = `${currentHours}:${currentMinutes}`;
+            const todayDate = getTodayDateString();
+
+            reminders.forEach(reminder => {
+                // Trigger alert only if time matches AND it hasn't been marked as taken today
+                const lastTriggered = reminder.lastTriggered || 0; // To prevent multiple alerts within the same minute
+                if (reminder.time === currentTime && reminder.takenDate !== todayDate && (now.getTime() - lastTriggered) > 60 * 1000) {
+                    const message = `It's ${reminder.time} - time to take your ${reminder.name}!`;
+                    showAlert('Time for your supplement!', message); // Still show custom in-app alert
+                    sendNotification('Supplement Reminder', message); // Also send browser notification
+
+                    reminder.lastTriggered = now.getTime(); // Update last triggered timestamp
+                    saveReminders(); // Save to persist the lastTriggered value
+                }
+            });
+        }
+
+        // Initialize on page load
+        window.onload = function() {
+            loadAllData(); // This function now handles all loading and initial streak checks
+            setInterval(checkReminders, 60 * 1000);
+            checkReminders(); // Immediate check in case a reminder time has just passed
+        };
+    </script>
+</body>
+</html>
