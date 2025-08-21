@@ -27,7 +27,7 @@
 
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #FFFFFF; /* Changed to white */
+            background-color: #FFFFFF; /* White background */
             display: flex;
             justify-content: center;
             align-items: center;
@@ -141,7 +141,10 @@
 </head>
 <body class="selection:bg-darker-pink selection:text-white">
     <div class="container bg-baby-pink p-8 sm:p-12 rounded-3xl shadow-xl max-w-lg w-full border border-border-color">
-        <!-- Main heading removed as requested -->
+        <!-- User ID Display -->
+        <div class="mb-4 p-3 bg-white rounded-xl shadow-sm border border-border-color text-center">
+            <p class="text-text-color text-xs">Your User ID: <span id="userIdDisplay" class="font-bold">Loading...</span></p>
+        </div>
 
         <!-- Notification Permission Section -->
         <div id="notificationSection" class="mb-4 p-4 bg-white rounded-2xl shadow-sm border border-border-color text-center">
@@ -203,36 +206,44 @@
         </div>
     </div>
 
-    <script>
-        // Store reminders in a simple array
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Firebase variables (populated by Canvas environment)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let currentUserId = null;
         let reminders = [];
 
-        // Global streak variables
+        // Global streak variables (fetched from Firestore)
         let currentStreak = 0;
-        let lastSupplementTakenDate = null; // YYYY-MM-DD format: Most recent date *any* supplement was marked taken.
-        let lastDayAuditedDate = null; // YYYY-MM-DD format: Last date for which the "all supplements taken" audit was run.
+        let lastSupplementTakenDate = null;
+        let lastDayAuditedDate = null;
 
-        // Get DOM elements
+        // Get DOM elements (re-defined here for module scope)
         const reminderForm = document.getElementById('reminderForm');
         const supplementNameInput = document.getElementById('supplementName');
         const reminderTimeInput = document.getElementById('reminderTime');
         const reminderListDiv = document.getElementById('reminderList');
         const noRemindersMessage = document.getElementById('noRemindersMessage');
-
-        // Toggle add reminder section elements
         const toggleAddReminderButton = document.getElementById('toggleAddReminderButton');
         const addReminderSection = document.getElementById('addReminderSection');
-
-        // Custom alert modal elements
         const customAlertOverlay = document.getElementById('customAlertOverlay');
         const customAlertTitle = document.getElementById('customAlertTitle');
         const customAlertMessage = document.getElementById('customAlertMessage');
         const customAlertCloseBtn = document.getElementById('customAlertCloseBtn');
-
-        // Notification elements
         const notificationStatus = document.getElementById('notificationStatus');
         const requestNotificationPermissionButton = document.getElementById('requestNotificationPermissionButton');
-        const notificationSection = document.getElementById('notificationSection'); // New: Get the whole section
+        const notificationSection = document.getElementById('notificationSection');
+        const userIdDisplay = document.getElementById('userIdDisplay'); // User ID display element
+        const streakDisplay = document.getElementById('streakDisplay'); // Streak display element
 
         /**
          * Displays a custom alert message instead of using window.alert().
@@ -251,28 +262,27 @@
         });
 
         /**
-         * Saves the current reminders array to localStorage.
+         * Saves streak data to Firestore.
          */
-        function saveReminders() {
-            localStorage.setItem('supplementReminders', JSON.stringify(reminders));
-        }
-
-        /**
-         * Saves streak data to localStorage.
-         */
-        function saveStreakData() {
-            localStorage.setItem('supplementStreak', JSON.stringify({
-                currentStreak: currentStreak,
-                lastSupplementTakenDate: lastSupplementTakenDate,
-                lastDayAuditedDate: lastDayAuditedDate
-            }));
+        async function saveStreakData() {
+            if (!currentUserId) return;
+            const streakDocRef = doc(db, `artifacts/${appId}/users/${currentUserId}/user_settings`, 'streak');
+            try {
+                await setDoc(streakDocRef, {
+                    currentStreak: currentStreak,
+                    lastSupplementTakenDate: lastSupplementTakenDate,
+                    lastDayAuditedDate: lastDayAuditedDate
+                }, { merge: true }); // Use merge to avoid overwriting other potential settings
+            } catch (error) {
+                console.error("Error saving streak data to Firestore:", error);
+                showAlert("Sync Error", "Could not save streak data. Please check your internet connection.");
+            }
         }
 
         /**
          * Updates the streak display in the UI.
          */
         function updateStreakDisplay() {
-            const streakDisplay = document.getElementById('streakDisplay');
             if (streakDisplay) {
                 if (currentStreak > 0) {
                     streakDisplay.textContent = `Current Streak: ${currentStreak} Day${currentStreak > 1 ? 's' : ''}! 🎉`;
@@ -308,46 +318,75 @@
         }
 
         /**
-         * Loads all data (reminders and streak) from localStorage and performs daily streak validation.
+         * Handles all data loading and real-time updates from Firestore.
+         * Sets up onSnapshot listeners for supplements and streak data.
          */
-        function loadAllData() {
+        async function setupFirestoreListeners() {
+            if (!db || !currentUserId) return;
+
+            // --- Listen for Supplement Changes ---
+            const supplementsCollectionRef = collection(db, `artifacts/${appId}/users/${currentUserId}/supplements`);
+            onSnapshot(supplementsCollectionRef, (snapshot) => {
+                reminders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const todayDate = getTodayDateString();
+
+                // Reset 'taken' status for current day's reminders if date has changed
+                reminders.forEach(reminder => {
+                    if (reminder.takenDate !== todayDate) {
+                        reminder.takenDate = null;
+                    }
+                });
+                displayReminders(); // Re-render reminders
+                // Note: saveReminders is implicitly handled by Firestore updates
+            }, (error) => {
+                console.error("Error listening to supplements:", error);
+                showAlert("Sync Error", "Failed to load reminders. Please try refreshing.");
+            });
+
+            // --- Listen for Streak Data Changes ---
+            const streakDocRef = doc(db, `artifacts/${appId}/users/${currentUserId}/user_settings`, 'streak');
+            onSnapshot(streakDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    currentStreak = data.currentStreak || 0;
+                    lastSupplementTakenDate = data.lastSupplementTakenDate || null;
+                    lastDayAuditedDate = data.lastDayAuditedDate || null;
+                } else {
+                    // If streak doc doesn't exist, initialize
+                    currentStreak = 0;
+                    lastSupplementTakenDate = null;
+                    lastDayAuditedDate = null;
+                    saveStreakData(); // Create the doc
+                }
+                updateStreakDisplay();
+                performMidnightAudit(); // Perform audit when streak data is loaded/updated
+            }, (error) => {
+                console.error("Error listening to streak data:", error);
+                showAlert("Sync Error", "Failed to load streak data.");
+            });
+        }
+
+
+        /**
+         * Performs the "midnight audit" for the streak based on previous day's completion.
+         * This runs when streak data is loaded or updated.
+         */
+        function performMidnightAudit() {
             const todayDate = getTodayDateString();
-
-            // Load reminders
-            const storedReminders = localStorage.getItem('supplementReminders');
-            if (storedReminders) {
-                reminders = JSON.parse(storedReminders);
-            } else {
-                reminders = [];
-            }
-
-            // Load streak data
-            const storedStreak = localStorage.getItem('supplementStreak');
-            if (storedStreak) {
-                const data = JSON.parse(storedStreak);
-                currentStreak = data.currentStreak || 0;
-                lastSupplementTakenDate = data.lastSupplementTakenDate || null;
-                lastDayAuditedDate = data.lastDayAuditedDate || null;
-            } else {
-                currentStreak = 0;
-                lastSupplementTakenDate = null;
-                lastDayAuditedDate = null;
-            }
-
-            // --- STREAK RESET LOGIC (Midnight Audit) ---
-            // This logic runs if the app is opened on a new day since it was last audited.
             if (lastDayAuditedDate && lastDayAuditedDate !== todayDate) {
                 const dayToAudit = lastDayAuditedDate;
 
-                // Check if all supplements for the 'dayToAudit' were marked as taken
-                // This condition applies only if there were reminders set on that day
+                // Only audit if there were reminders present during the audited day.
+                // We cannot reliably audit a day if the reminders list was empty.
+                // Assuming reminders array *at the time of audit* reflects what was there.
+                // For a robust system, you'd store daily reminder snapshots. For this app,
+                // we rely on `reminders` array reflecting current set reminders, which is a simplification.
                 if (reminders.length > 0) {
                     const allTakenForAuditDay = reminders.every(r => r.takenDate === dayToAudit);
-
                     if (!allTakenForAuditDay) {
-                        // If not all were taken for the day that just ended, reset the streak
                         currentStreak = 0;
-                        lastSupplementTakenDate = null; // Also reset last activity date if streak broken
+                        lastSupplementTakenDate = null;
+                        console.log(`Streak reset: Not all supplements taken on ${dayToAudit}`);
                     }
                 }
             }
@@ -355,55 +394,43 @@
             // Check for broken streak due to no activity on previous day, if streak was active
             const yesterdayDate = getYesterdayDateString();
             if (currentStreak > 0 && lastSupplementTakenDate && lastSupplementTakenDate !== yesterdayDate && lastSupplementTakenDate !== todayDate) {
-                 // If the last day a supplement was taken was not yesterday (and not today), streak is broken
-                 currentStreak = 0;
-                 lastSupplementTakenDate = null;
+                currentStreak = 0;
+                lastSupplementTakenDate = null;
+                console.log("Streak reset: No activity on previous day.");
             }
 
-
-            // Always update lastDayAuditedDate to today's date, indicating we've processed up to now
+            // Always update lastDayAuditedDate to today's date after the audit
             lastDayAuditedDate = todayDate;
-            saveStreakData(); // Save updated streak and audit date
-
-            // Reset 'taken' status for current day's reminders
-            reminders.forEach(reminder => {
-                if (reminder.takenDate !== todayDate) {
-                    reminder.takenDate = null; // Clear taken status
-                }
-            });
-
-            saveReminders(); // Save potentially reset statuses
-
-            displayReminders();
+            saveStreakData();
             updateStreakDisplay();
-            updateNotificationUI();
         }
 
         /**
-         * Adds a new reminder to the list.
+         * Adds a new reminder to Firestore.
          * @param {Event} event - The form submission event.
          */
-        reminderForm.addEventListener('submit', (event) => {
-            event.preventDefault(); // Prevent default form submission
+        reminderForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
 
             const name = supplementNameInput.value.trim();
-            const time = reminderTimeInput.value; // Format: HH:MM
+            const time = reminderTimeInput.value;
 
-            if (name && time) {
-                reminders.push({
-                    id: Date.now(), // Unique ID for each reminder
-                    name: name,
-                    time: time,
-                    takenDate: null // Stores the date (YYYY-MM-DD) when supplement was taken
-                });
-                saveReminders();
-                displayReminders();
-                supplementNameInput.value = ''; // Clear input fields
-                reminderTimeInput.value = '';
-                // Optionally hide the form again after adding
-                // addReminderSection.classList.add('hidden');
+            if (name && time && currentUserId) {
+                try {
+                    const supplementsCollectionRef = collection(db, `artifacts/${appId}/users/${currentUserId}/supplements`);
+                    await addDoc(supplementsCollectionRef, {
+                        name: name,
+                        time: time,
+                        takenDate: null // Will be updated when marked taken
+                    });
+                    supplementNameInput.value = '';
+                    reminderTimeInput.value = '';
+                } catch (error) {
+                    console.error("Error adding document: ", error);
+                    showAlert("Add Error", "Could not add reminder. Please try again.");
+                }
             } else {
-                showAlert('Input Error', 'Please enter both supplement name and time.');
+                showAlert('Input Error', 'Please enter both supplement name and time, and ensure you are logged in.');
             }
         });
 
@@ -431,7 +458,7 @@
 
                 reminders.forEach(reminder => {
                     const reminderItem = document.createElement('div');
-                    reminderItem.id = `reminder-${reminder.id}`;
+                    reminderItem.id = `reminder-${reminder.id}`; // Use Firestore doc ID
                     reminderItem.classList.add(
                         'reminder-item',
                         'flex',
@@ -526,18 +553,21 @@
         }
 
         /**
-         * Toggles the 'taken' status for a reminder and updates the streak.
-         * @param {number} id - The ID of the reminder to update.
+         * Toggles the 'taken' status for a reminder in Firestore and updates the streak.
+         * @param {string} id - The Firestore document ID of the reminder to update.
          */
-        function toggleTakenStatus(id) {
-            const reminderIndex = reminders.findIndex(r => r.id === id);
-            if (reminderIndex > -1) {
-                const todayDate = getTodayDateString();
-                // If not already taken today, mark as taken.
-                if (reminders[reminderIndex].takenDate !== todayDate) {
-                    reminders[reminderIndex].takenDate = todayDate;
-                    saveReminders();
-                    displayReminders(); // Re-display to update the UI
+        async function toggleTakenStatus(id) {
+            if (!currentUserId) return;
+            const reminderRef = doc(db, `artifacts/${appId}/users/${currentUserId}/supplements`, id);
+            const todayDate = getTodayDateString();
+
+            try {
+                // Check if already taken today before updating Firestore and streak
+                const reminderDoc = await getDoc(reminderRef);
+                if (reminderDoc.exists() && reminderDoc.data().takenDate !== todayDate) {
+                    await updateDoc(reminderRef, {
+                        takenDate: todayDate
+                    });
 
                     // Streak increment logic: only if this is the first supplement marked today
                     if (lastSupplementTakenDate !== todayDate) {
@@ -548,29 +578,47 @@
                             currentStreak = 1; // Reset to 1 if not consecutive
                         }
                         lastSupplementTakenDate = todayDate;
-                        saveStreakData();
+                        await saveStreakData();
                         updateStreakDisplay();
                     }
                 }
+            } catch (error) {
+                console.error("Error updating document or streak: ", error);
+                showAlert("Update Error", "Could not mark supplement as taken. Please try again.");
             }
         }
 
         /**
-         * Deletes a reminder by its ID and resets streak if all are deleted.
-         * @param {number} id - The ID of the reminder to delete.
+         * Deletes a reminder from Firestore and resets streak if all are deleted.
+         * @param {string} id - The Firestore document ID of the reminder to delete.
          */
-        function deleteReminder(id) {
-            reminders = reminders.filter(reminder => reminder.id !== id);
-            saveReminders();
-            displayReminders();
+        async function deleteReminder(id) {
+            if (!currentUserId) return;
+            const reminderRef = doc(db, `artifacts/${appId}/users/${currentUserId}/supplements`, id);
+            try {
+                await deleteDoc(reminderRef);
+                // The onSnapshot listener will automatically update `reminders` array and re-render.
+                // After deletion, check if reminders array is empty to reset streak.
+                // This check is best done after `onSnapshot` has updated `reminders`
+                // (which happens immediately after a deleteDoc resolves, typically).
+                // Or we can query the reminders and then update the streak.
 
-            // If all reminders are deleted, reset the streak
-            if (reminders.length === 0) {
-                currentStreak = 0;
-                lastSupplementTakenDate = null;
-                lastDayAuditedDate = null;
-                saveStreakData();
-                updateStreakDisplay();
+                // To ensure streak reset happens right after all items are deleted,
+                // we can re-fetch count or react to the `reminders` array length
+                // updated by the onSnapshot in setupFirestoreListeners.
+                // For direct control:
+                const supplementsCollectionRef = collection(db, `artifacts/${appId}/users/${currentUserId}/supplements`);
+                const snapshot = await getDocs(supplementsCollectionRef);
+                if (snapshot.empty) { // Check if collection is now empty
+                    currentStreak = 0;
+                    lastSupplementTakenDate = null;
+                    lastDayAuditedDate = null;
+                    await saveStreakData();
+                    updateStreakDisplay();
+                }
+            } catch (error) {
+                console.error("Error deleting document: ", error);
+                showAlert("Delete Error", "Could not delete reminder. Please try again.");
             }
         }
 
@@ -603,6 +651,7 @@
                 case 'denied':
                     notificationStatus.textContent = "Browser notifications are BLOCKED. Please enable them in your browser settings.";
                     requestNotificationPermissionButton.classList.add('hidden'); // Keep button hidden
+                    notificationSection.classList.remove('hidden'); // Ensure section is visible if denied
                     break;
                 case 'default':
                     notificationStatus.textContent = "Enable browser notifications for reminders.";
@@ -647,17 +696,60 @@
                     showAlert('Time for your supplement!', message); // Still show custom in-app alert
                     sendNotification('Supplement Reminder', message); // Also send browser notification
 
-                    reminder.lastTriggered = now.getTime(); // Update last triggered timestamp
-                    saveReminders(); // Save to persist the lastTriggered value
+                    // Update lastTriggered timestamp in Firestore for persistence
+                    if (currentUserId) {
+                        const reminderRef = doc(db, `artifacts/${appId}/users/${currentUserId}/supplements`, reminder.id);
+                        updateDoc(reminderRef, { lastTriggered: now.getTime() })
+                            .catch(e => console.error("Error updating lastTriggered:", e));
+                    }
                 }
             });
         }
 
-        // Initialize on page load
-        window.onload = function() {
-            loadAllData(); // This function now handles all loading and initial streak checks
-            setInterval(checkReminders, 60 * 1000);
-            checkReminders(); // Immediate check in case a reminder time has just passed
+        // --- Initialization on page load ---
+        window.onload = async function() {
+            // Initialize Firebase App
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+
+            // Authenticate user
+            if (initialAuthToken) {
+                await signInWithCustomToken(auth, initialAuthToken)
+                    .catch(error => {
+                        console.error("Error signing in with custom token:", error);
+                        // Fallback to anonymous sign-in if custom token fails
+                        signInAnonymously(auth).catch(e => console.error("Anonymous sign-in failed:", e));
+                    });
+            } else {
+                await signInAnonymously(auth)
+                    .catch(e => console.error("Anonymous sign-in failed:", e));
+            }
+
+            // Listen for auth state changes and then setup Firestore listeners
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    currentUserId = user.uid;
+                    userIdDisplay.textContent = currentUserId;
+                    // Now that user is authenticated, set up real-time listeners
+                    await setupFirestoreListeners();
+
+                    // Initial check for reminders and streak display
+                    updateNotificationUI();
+                    setInterval(checkReminders, 60 * 1000); // Check reminders every minute
+                    checkReminders(); // Immediate check
+                } else {
+                    currentUserId = null;
+                    userIdDisplay.textContent = "Not authenticated";
+                    reminders = []; // Clear local reminders if user signs out
+                    currentStreak = 0;
+                    lastSupplementTakenDate = null;
+                    lastDayAuditedDate = null;
+                    displayReminders();
+                    updateStreakDisplay();
+                    showAlert("Authentication Required", "Please refresh the page to sign in and load your reminders.");
+                }
+            });
         };
     </script>
 </body>
